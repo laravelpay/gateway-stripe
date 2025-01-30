@@ -7,7 +7,7 @@ Before you can install this package, make sure you have the composer package `la
 Run this command inside your Laravel application
 
 ```
-php artisan gateway:install laravelpay/stripe
+php artisan gateway:install laravelpay/gateway-stripe
 ```
 
 ## Setup
