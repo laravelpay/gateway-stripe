@@ -12,5 +12,5 @@ php artisan gateway:install laravelpay/gateway-stripe
 
 ## Setup
 ```
-php artisan gateway:install stripe-checkout
+php artisan gateway:setup stripe-checkout
 ```
