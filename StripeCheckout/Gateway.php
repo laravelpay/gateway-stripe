@@ -28,9 +28,9 @@ class Gateway extends GatewayFoundation
     public function config(): array
     {
         return [
-            'public_key' => [
-                'label' => 'Public Key',
-                'description' => 'Enter your Stripe public key.',
+            'secret_key' => [
+                'label' => 'Secret Key',
+                'description' => 'Enter your Stripe secret key.',
                 'type' => 'text',
                 'rules' => ['required'],
             ],
