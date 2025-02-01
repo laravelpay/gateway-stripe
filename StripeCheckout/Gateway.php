@@ -60,7 +60,7 @@ class Gateway extends GatewayFoundation
                     'quantity' => 1,
                 ]],
                 'mode' => 'payment',
-                'success_url' => $payment->webhookUrl(),
+                'success_url' => $payment->callbackUrl(),
                 'cancel_url' => $payment->cancelUrl(),
                 'metadata' => [
                     'payment_id' => $payment->id,
@@ -114,8 +114,20 @@ class Gateway extends GatewayFoundation
 
             return redirect($payment->successUrl());
         }
+    }
 
-        // listen for stripe webhook events
+    /**
+     * Handle (webhooks) from Stripe.
+     * Stripe calls this endpoint whenever the payment status changes.
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @return \Illuminate\Http\JsonResponse
+     *
+     * @throws \Exception
+     */
+    public function webhook(Request $request)
+    {
         // todo
+        return response()->json(['status' => 'ok']);
     }
 }
