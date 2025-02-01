@@ -45,13 +45,10 @@ class Gateway extends GatewayFoundation
 
     public function pay($payment)
     {
-        $payment_types = ($payment->currency == 'EUR') ? ['card', 'ideal', 'bancontact'] : ['card'];
-
         $stripeSecretKey = $payment->gateway->config('secret_key');
 
-        $response = Http::withToken($stripeSecretKey)
+        $response = Http::withToken($stripeSecretKey)->asForm()
             ->post('https://api.stripe.com/v1/checkout/sessions', [
-                'payment_method_types' => $payment_types,
                 'line_items' => [[
                     'price_data' => [
                         'currency' => $payment->currency,
@@ -63,7 +60,7 @@ class Gateway extends GatewayFoundation
                     'quantity' => 1,
                 ]],
                 'mode' => 'payment',
-                'success_url' => $payment->successUrl(),
+                'success_url' => $payment->webhookUrl(),
                 'cancel_url' => $payment->cancelUrl(),
                 'metadata' => [
                     'payment_id' => $payment->id,
@@ -77,11 +74,48 @@ class Gateway extends GatewayFoundation
 
         $checkoutSession = $response->json();
 
+        // store transaction id locally
+        $payment->update([
+            'transaction_id' => $checkoutSession['id'],
+        ]);
+
         return redirect($checkoutSession['url'], 303);
     }
 
     public function callback(Request $request)
     {
         // Handle the Stripe webhook event
+        if($request->has('payment_id')) {
+            $payment = Payment::find($request->input('payment_id'));
+
+            if (!$payment) {
+                throw new Exception('Payment not found');
+            }
+
+            if($payment->isPaid()) {
+                return redirect($payment->successUrl());
+            }
+
+            // make api call to stripe to get the payment status
+            $stripeSecretKey = $payment->gateway->config('secret_key');
+
+            $response = Http::withToken($stripeSecretKey)->get('https://api.stripe.com/v1/checkout/sessions/' . $payment->transaction_id);
+
+            if ($response->failed()) {
+                // Handle failure (e.g., log error, throw exception)
+                throw new \Exception('Stripe Checkout Session retrieval failed: ' . $response->body());
+            }
+
+            $checkoutSession = $response->json();
+
+            if($checkoutSession['payment_status'] === 'paid') {
+                $payment->completed();
+            }
+
+            return redirect($payment->successUrl());
+        }
+
+        // listen for stripe webhook events
+        // todo
     }
 }
