@@ -34,12 +34,6 @@ class Gateway extends GatewayFoundation
                 'type' => 'text',
                 'rules' => ['required'],
             ],
-            'webhook_secret' => [
-                'label' => 'Webhook Secret',
-                'description' => 'Enter your Stripe webhook secret.',
-                'type' => 'text',
-                'rules' => ['required'],
-            ],
         ];
     }
 
@@ -63,7 +57,7 @@ class Gateway extends GatewayFoundation
                 'success_url' => $payment->callbackUrl(),
                 'cancel_url' => $payment->cancelUrl(),
                 'metadata' => [
-                    'payment_id' => $payment->id,
+                    'payment_token' => $payment->token,
                 ],
             ]);
 
@@ -79,14 +73,14 @@ class Gateway extends GatewayFoundation
             'transaction_id' => $checkoutSession['id'],
         ]);
 
-        return redirect($checkoutSession['url'], 303);
+        return redirect($checkoutSession['url']);
     }
 
     public function callback(Request $request)
     {
         // Handle the Stripe webhook event
-        if($request->has('payment_id')) {
-            $payment = Payment::find($request->input('payment_id'));
+        if($request->has('payment_token')) {
+            $payment = Payment::where('token', $request->payment_token)->first();
 
             if (!$payment) {
                 throw new Exception('Payment not found');
@@ -108,8 +102,13 @@ class Gateway extends GatewayFoundation
 
             $checkoutSession = $response->json();
 
+            // check if the payment token is the same as the one in the checkout session
+            if($checkoutSession['metadata']['payment_token'] !== $payment->token) {
+                throw new Exception('Payment token mismatch');
+            }
+
             if($checkoutSession['payment_status'] === 'paid') {
-                $payment->completed();
+                $payment->completed($checkoutSession['id'], $checkoutSession);
             }
 
             return redirect($payment->successUrl());
@@ -127,7 +126,50 @@ class Gateway extends GatewayFoundation
      */
     public function webhook(Request $request)
     {
-        // todo
-        return response()->json(['status' => 'ok']);
+        // Get the stripe transaction id from the request
+        $transactionId = $request->input('data.object.id');
+
+        if(!$transactionId ) {
+            throw new Exception('Transaction ID not found');
+        }
+
+        // find the payment by the transaction id
+        $payment = Payment::where('transaction_id', $transactionId)->first();
+
+        if(!$payment) {
+            throw new Exception('Payment not found');
+        }
+
+        if($payment->isPaid()) {
+            return response()->json(['message' => 'Payment already completed'], 200);
+        }
+
+        // get the payment status from the request
+        $paymentStatus = $request->input('data.object.payment_status');
+
+        if($paymentStatus === 'paid') {
+            // make api call to stripe to check whether the payment is successful
+            $stripeSecretKey = $payment->gateway->config('secret_key');
+            $response = Http::withToken($stripeSecretKey)->get('https://api.stripe.com/v1/checkout/sessions/' . $payment->transaction_id);
+
+            if ($response->failed()) {
+                // Handle failure (e.g., log error, throw exception)
+                throw new \Exception('Stripe Checkout Session retrieval failed: ' . $response->body());
+            }
+
+            $checkoutSession = $response->json();
+
+            // check if the payment token is the same as the one in the checkout session
+            if($checkoutSession['metadata']['payment_token'] !== $payment->token) {
+                throw new Exception('Payment token mismatch');
+            }
+
+            if($checkoutSession['payment_status'] === 'paid') {
+                $payment->completed($checkoutSession['id'], $checkoutSession);
+                return response()->json(['message' => 'Payment completed'], 200);
+            }
+        }
+
+        throw new Exception('Webhook does not contain valid data');
     }
 }
