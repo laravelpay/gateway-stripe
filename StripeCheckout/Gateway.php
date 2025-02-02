@@ -4,6 +4,7 @@ namespace App\Gateways\StripeCheckout;
 
 use LaraPay\Framework\Interfaces\GatewayFoundation;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use LaraPay\Framework\Payment;
 use Illuminate\Http\Request;
 use Exception;
@@ -29,10 +30,16 @@ class Gateway extends GatewayFoundation
     {
         return [
             'secret_key' => [
-                'label' => 'Secret Key',
-                'description' => 'Enter your Stripe secret key.',
-                'type' => 'text',
-                'rules' => ['required'],
+                'label'       => 'Stripe Secret Key',
+                'description' => 'Your Stripe Secret API Key',
+                'type'        => 'text',
+                'rules'       => ['required', 'string', 'starts_with:sk_'],
+            ],
+            'webhook_secret' => [
+                'label'       => 'Stripe Webhook Secret',
+                'description' => 'Your Stripe Webhook Secret',
+                'type'        => 'text',
+                'rules'       => ['required', 'string', 'starts_with:whsec_'],
             ],
         ];
     }
@@ -140,6 +147,9 @@ class Gateway extends GatewayFoundation
             throw new Exception('Payment not found');
         }
 
+        // verify the webhook
+        $this->verifyStripeWebhook($payment->gateway->config('webhook_secret'));
+
         if($payment->isPaid()) {
             return response()->json(['message' => 'Payment already completed'], 200);
         }
@@ -148,28 +158,53 @@ class Gateway extends GatewayFoundation
         $paymentStatus = $request->input('data.object.payment_status');
 
         if($paymentStatus === 'paid') {
-            // make api call to stripe to check whether the payment is successful
-            $stripeSecretKey = $payment->gateway->config('secret_key');
-            $response = Http::withToken($stripeSecretKey)->get('https://api.stripe.com/v1/checkout/sessions/' . $payment->transaction_id);
+            $payment->completed($transactionId, $request->input('data.object'));
 
-            if ($response->failed()) {
-                // Handle failure (e.g., log error, throw exception)
-                throw new \Exception('Stripe Checkout Session retrieval failed: ' . $response->body());
-            }
-
-            $checkoutSession = $response->json();
-
-            // check if the payment token is the same as the one in the checkout session
-            if($checkoutSession['metadata']['payment_token'] !== $payment->token) {
-                throw new Exception('Payment token mismatch');
-            }
-
-            if($checkoutSession['payment_status'] === 'paid') {
-                $payment->completed($checkoutSession['id'], $checkoutSession);
-                return response()->json(['message' => 'Payment completed'], 200);
-            }
+            return response()->json(['message' => 'Payment completed'], 200);
         }
 
         throw new Exception('Webhook does not contain valid data');
+    }
+
+    private function verifyStripeWebhook($webhookSecret)
+    {
+        // Get the raw request body
+        $payload = file_get_contents('php://input');
+
+        // Retrieve the Stripe signature header
+        $sigHeader = $_SERVER['HTTP_STRIPE_SIGNATURE'] ?? null;
+
+        if (!$sigHeader) {
+            throw new \Exception("Stripe signature header is missing.");
+        }
+
+        // Parse the Stripe signature header
+        $timestamp = null;
+        $signature = null;
+        foreach (explode(',', $sigHeader) as $part) {
+            list($key, $value) = explode('=', trim($part), 2);
+            if ($key === 't') {
+                $timestamp = $value;
+            } elseif ($key === 'v1') {
+                $signature = $value;
+            }
+        }
+
+        if (!$timestamp || !$signature) {
+            throw new \Exception("Invalid Stripe signature header format.");
+        }
+
+        // Compute the expected signature
+        $signedPayload = $timestamp . '.' . $payload;
+        $expectedSignature = hash_hmac('sha256', $signedPayload, $webhookSecret);
+
+        // Compare the computed signature with the Stripe-provided signature
+        if (!hash_equals($expectedSignature, $signature)) {
+            throw new \Exception("Invalid Stripe webhook signature.");
+        }
+
+        Log::error('Stripe webhook verified');
+
+        return json_decode($payload, true); // Return the webhook event as an array
     }
 }
