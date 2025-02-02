@@ -11,6 +11,24 @@ php artisan gateway:install laravelpay/gateway-stripe
 ```
 
 ## Setup
+
+### Secret Key
+Sandbox Secret key can be found at https://dashboard.stripe.com/test/apikeys
+
+
+Live Secret Key can be found at https://dashboard.stripe.com/apikeys
+
+### Create Webhook
+Create Webhook in Sandbox Mode: https://dashboard.stripe.com/test/webhooks/create
+
+Create Webhook in Live Mode: https://dashboard.stripe.com/webhooks/create
+
+Set the webhook endpoint to `https://your-application.com/payments/webhooks/stripe-checkout` replace your-application.com with your actual domain. 
+
+Select event `checkout.session.completed`
+
+## Create your gateway configuration using command below
+
 ```
 php artisan gateway:setup stripe-checkout
 ```
